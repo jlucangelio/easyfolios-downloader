@@ -1,4 +1,5 @@
 import subprocess
+import sys
 import cv2
 import numpy as np
 import time
@@ -162,6 +163,17 @@ def scroll_down_one_picture(current_download_location):
     return scroll(cur_x, cur_y, cur_x, new_y, 1000)
 
 
+def scroll_down_one_video(current_download_location):
+    """
+    Swipes up to scroll down one video.
+    """
+    cur_x = 500
+    cur_y = current_download_location[1]
+    new_y = 495
+
+    return scroll(cur_x, cur_y, cur_x, new_y, 1000)
+
+
 def download_all_photos_from_entry():
     # Don't loop forever if all detection fails.
     for _ in range(100):
@@ -217,19 +229,154 @@ def download_all_photos_from_entry():
         coord = find_element("back.png")
         if coord is not None:
             tap_element(*coord)
+            time.sleep(2)
+            break
+
+
+def wait_for_video_download():
+    downloading = False
+
+    # Wait roughly 50 seconds for a video to download.
+    for _ in range(50):
+        if not take_screenshot():
+            continue
+
+        coord = find_element("downloadingvideo.png")
+        if not downloading:
+            downloading = coord is not None
+            if downloading:
+                print("Waiting for download")
+            continue
+
+        if downloading:
+            if coord:
+                continue
+
+            if find_element("failed_to_download.png") is not None:
+                print("failed to download")
+                for i in range(5):
+                    coord = find_element("ok_after_failed.png")
+                    if not coord:
+                        continue
+                    print("clicking ok")
+                    tap_element(*coord)
+                    break
+
+            # If we no longer see the message, but we've seen it before, we're done.
+            print("Download complete")
+            break
+
+    for _ in range(5):
+        if not take_screenshot():
+            continue
+
+        # Close the "video downloaded" popup.
+        coord = find_element("video_ok.png")
+        if not coord:
+            continue
+
+        tap_element(*coord)
+        time.sleep(1)
+        break
+
+
+def download_all_videos_from_entry():
+    # Don't loop forever if all detection fails.
+    for _ in range(100):
+        if not take_screenshot():
+            print("Failed to take screenshot.")
+            break
+
+        # Figure out if a video is open by mistake.
+        coord = find_element("closevideo.png")
+        if coord is not None:
+            # Video is open. Close it.
+            print("Closing open video")
+            tap_element(*coord)
             time.sleep(1)
+            continue
+
+        # Figure out if we're at the end of the entry.
+        # There is an "Add your comment" button at the end of every entry.
+        coord = find_element("add_your_comment.png")
+        if coord is not None:
+            # Reached the end.
+            coords = find_all_elements("download_video.png")
+            for c in coords:
+                print(f"Downloading video at {c}")
+                if not args.dry_run:
+                    # print(f"tapping {c}")
+                    tap_element(*c)
+                    wait_for_video_download()
+                time.sleep(1)
+            # Exit the outer loop
+            break
+
+        # Otherwise, find the download buttons, download the first video, and scroll the list
+        # until the download button is no longer visible.
+        coords = find_all_elements("download_video.png")
+        if len(coords) > 0:
+            # print(f"Found {len(coords)} elements at {coords}")
+            if not args.dry_run:
+                print(f"Downloading image at {coords[0]}")
+                tap_element(*coords[0])
+                time.sleep(1)
+            scroll_down_one_video(coords[0])
+        else:
+            # If there are no visible download buttons, scroll the view until the bottom
+            # of the current entry is no longer visible.
+            scroll(500, 2200, 500, 495, 1000)
+
+    # After downloading all photos from an entry, go back to the main screen.
+    # Sometimes the overlay that shows where pictures are downloaded will block the back button, so try a few times.
+    for _ in range(5):
+        if not take_screenshot():
+            break
+        time.sleep(1)
+        coord = find_element("back.png")
+        if coord is not None:
+            tap_element(*coord)
+            time.sleep(2)
             break
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="ADB Automation Script")
     parser.add_argument("--dry-run", action="store_true", help="Perform a dry run without making any changes")
+    parser.add_argument("--videos", action="store_true", help="Download videos")
     args = parser.parse_args()
 
     if args.dry_run:
         print("Dry run mode enabled. No actions will be taken.")
 
-    # Download all photos for one entry.
+    if args.videos:
+        # If everything else fails, at least don't loop forever.
+        for _ in range(10000):
+            if not take_screenshot():
+                break
+
+            # Have we reached the end?
+            if find_element("loadmore.png") is not None:
+                break
+
+            # Tap one video entry.
+            if not take_screenshot():
+                break
+
+            coords = find_all_elements("right.png")
+            if len(coords) == 0:
+                print("No right arrows found.")
+                break
+
+            # print(f"Found {len(coords)} elements at {coords}")
+            tap_element(*coords[0])
+            time.sleep(2)
+            # Download all photos for one entry.
+            download_all_videos_from_entry()
+            scroll_down_one_entry(coords[0])
+
+        sys.exit(0)
+
     # If everything else fails, at least don't loop forever.
     for _ in range(10000):
         # Have we reached the end?
@@ -243,7 +390,8 @@ if __name__ == "__main__":
             if len(coords) > 0:
                 # print(f"Found {len(coords)} elements at {coords}")
                 tap_element(*coords[0])
-                time.sleep(1)
+                time.sleep(2)
+                # Download all photos for one entry.
                 download_all_photos_from_entry()
                 scroll_down_one_entry(coords[0])
             else:
